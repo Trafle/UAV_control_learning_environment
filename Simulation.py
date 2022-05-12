@@ -1,5 +1,7 @@
 import numpy as np
 
+TPS = 60  # Ticks Per Second
+
 class SimulationAgent:
     def calc_step(self):
         raise NotImplementedError()
@@ -10,21 +12,24 @@ class UAV(SimulationAgent):
     speed = np.array([0., 0., 0.])
     acceleration = np.array([0., 0., 0.])
     mass = 1
-    # ctrl_direct = np.array([0., 0., 0.]) # Where the pilot drives it at the moment (tick) using a joystick
+    cross_sectional_area = 0.1
+    drag_coefficient = 1.2
 
     def apply_force(self, F):
-        self.acceleration += F / self.mass # Newton's Second law of motion
+        self.acceleration = F / self.mass # Newton's Second law of motion
         return self
 
     def calc_step(self):
         # Calculate Speed
-        self.speed += self.acceleration
+        self.speed += self.acceleration/TPS
         # Calculate location
-        self.location += self.speed
+        self.location += self.speed/TPS
         return self
 
-class Wind(SimulationAgent):
+class Force(SimulationAgent):
     directional_force = np.array([0., 0., 0.])
+
+class Wind(Force):
     wind_strength = 10
     rate_of_change = 0.1 # Rate at which wind changes
     max_wind_force = 1
@@ -36,13 +41,24 @@ class Wind(SimulationAgent):
         self.directional_force.clip(-self.max_wind_force, self.max_wind_force)
         return self
 
-class Controls(SimulationAgent):
+class AirFriction(Force):
+    p = 1.225 # Air density in kg/m^3
+
+    def calc_step(self, A, V, C):
+        """Calculate air friction, where:
+        A: crossectional area of the object
+        V: object's speed relative to the fluid
+        C: drag coefficient of the object"""
+        self.directional_force = .5 * self.p * V * np.absolute(V) * C * A * 50000
+        # It's always positive. Make it opposite to speed
+        return self
+
+class Controls(Force):
     """General class for any control type that may be used in the future"""
-    directional_force = np.array([0, 0, 0])
+    directional_engine_strength = np.array([1, 1.3, 1])*1000  # Force of controls in Newtons
 
 import keyboard
 class KeyboardControls(Controls):
-    directional_engine_strength = np.array([1, 2, 1]) # Force of controls in newtons
 
     def calc_step(self):
         """Read the pressed buttons and set the directional_force accordingly"""
@@ -68,22 +84,32 @@ class KeyboardControls(Controls):
         self.directional_force[2] = Z * self.directional_engine_strength[2]
         return self
 
-def tick(uav, wind, controls, TPS):
-    collective_force_at_tick = wind.calc_step().directional_force + controls.directional_force
+
+
+def tick(uav, wind, air_friction, controls, TPS):
+    # collective_force_at_tick = wind.calc_step().directional_force + controls.calc_step().directional_force
+    collective_force_at_tick = wind.calc_step().directional_force + controls.calc_step().directional_force - \
+                               air_friction.calc_step(uav.cross_sectional_area, uav.speed, uav.drag_coefficient).\
+                               directional_force
+    # print(air_friction.directional_force / TPS)
     uav.apply_force(collective_force_at_tick / TPS)
     uav.calc_step()
     return True
 
 import time
+import os
 def simulate():
     uav1 = UAV()
     wind = Wind()
     keys = KeyboardControls()
-    TPS = 60 # Ticks Per Second
+    air_friction = AirFriction()
     while (True):
-        tick(uav1, wind, keys, TPS)
+        tick(uav1, wind, air_friction, keys, TPS)
         time.sleep(1 / TPS)
-        print(uav1.location)
+        os.system('cls')
+        print(uav1.speed.round(3))
+
+        # print(uav1.location.round(3))
 
 simulate()
 
